@@ -3,7 +3,11 @@ import sys
 import datetime
 import logging
 
-from config import LOG_LEVEL, GPT_MODEL, DISCORD_BOT_TOKEN, LOG_TO_FILE
+from config import (
+    LOG_LEVEL, LOG_TO_FILE,
+    GPT_MODEL, DISCORD_BOT_TOKEN,
+    DISCORD_CHANNELS, DISCORD_USERS
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(LOG_LEVEL.upper())
@@ -22,13 +26,6 @@ if LOG_TO_FILE:
 import discord
 from gpt import ChatGPT
 
-allowed_channels = [
-    1120397916411007119,  # private DM with Nater5000
-    1120447015168520294,  # assistant channel in Nater5000's server
-]
-allowed_authors = ["nater5000"]
-
-
 class BotClient(discord.Client):
     async def on_ready(self):
         logger.info(f"Logged on as {self.user}")
@@ -40,35 +37,38 @@ class BotClient(discord.Client):
             return
 
         logger.info(
-            f"Message: Channel {message.channel.id}/Author: {message.author}: {message.content}"
+            f"> {message.author}: {message.content}"
         )
-        if message.channel.id not in allowed_channels:
+        if message.channel.id not in DISCORD_CHANNELS:
             logger.info(f"Channel {message.channel.id} not allowed.")
             return
 
-        if message.author.name not in allowed_authors:
-            logger.info(f"Author {message.author} not allowed.")
+        if message.author.name not in DISCORD_USERS:
+            logger.info(f"User {message.author} not allowed.")
             return
 
-        if message.content.startswith("!"):
-            command = message.content[1:]
-            logger.info(f"Running command: {command}")
-            command_output = os.popen(command).read()
-            if command_output:
-                await message.channel.send(command_output)
-            else:
-                await message.channel.send("No output available.")
+        if message.content.startswith(">"):
+            self.run_command(message)
             return
 
         # add a thinking emoji to indicate that the bot is working
-        await message.add_reaction("🤔")
-        logger.info("Sending message to GPT...")
+        message.add_reaction("🤔")
+        logger.debug("Sending message to GPT...")
         response_message = self.chatgpt.send_message(message.content)
-        logger.info(f"Received response from GPT: {response_message}")
+        logger.info(f"> Assistant: {response_message}")
         # remove the thinking emoji
-        await message.clear_reaction("🤔")
+        message.clear_reaction("🤔")
         await message.channel.send(response_message)
-
+    
+    async def run_command(self, message):
+        command = message.content[1:]
+        logger.info(f"Running command: {command}")
+        command_output = os.popen(command).read()
+        if command_output:
+            await message.channel.send(command_output)
+        else:
+            await message.channel.send("No output available.")
+        return
 
 if __name__ == "__main__":
     intents = discord.Intents.default()

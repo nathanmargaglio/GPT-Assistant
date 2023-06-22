@@ -1,18 +1,37 @@
-import openai
-from config import OPENAI_API_KEY
-import tiktoken
+import sys
 import re
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
+import openai
+from config import OPENAI_API_KEY, LOG_LEVEL, LOG_TO_FILE
+import tiktoken
+
+logger = logging.getLogger(__name__)
+logger.setLevel(LOG_LEVEL.upper())
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+if LOG_TO_FILE:
+    logger.debug("Logging to file...")
+    handler = logging.FileHandler("bot.log")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 openai.api_key = OPENAI_API_KEY
 
-
 def get_embedding(text):
+    logger.debug(f"OpenAI: Getting embedding for text...")
     return openai.Embedding.create(input=[text], model="text-embedding-ada-002")[
         "data"
     ][0]["embedding"]
 
 
 def get_importance_of_interaction(message, response):
+    logger.debug("OpenAI: Chat Completion (get_importance_of_interaction)")
     importance_response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -45,6 +64,7 @@ def get_importance_of_interaction(message, response):
 
 
 def get_importance_of_insight(insight):
+    logger.debug("OpenAI: Chat Completion (get_importance_of_insight)")
     importance_response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -76,6 +96,7 @@ def get_importance_of_insight(insight):
 
 
 def get_insights(messages):
+    logger.debug("OpenAI: Chat Completion (get_insights)")
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=messages
@@ -94,11 +115,16 @@ def get_insights(messages):
     insights_list = re.findall(r'"(.*?)"', response.choices[0].message.content)
 
     insights = []
+    futures = []
+    with ThreadPoolExecutor() as executor:
+        for insight in insights_list:
+            futures.append(executor.submit(get_importance_of_insight, insight))
 
-    for insight in insights_list:
-        insights.append(
-            {"content": insight, "importance": get_importance_of_insight(insight)}
-        )
+        for insight, future in zip(insights_list, futures):
+            importance = future.result()
+            insights.append(
+                {"content": insight, "importance": importance}
+            )
 
     return insights
 
@@ -109,7 +135,7 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo"):
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
-        print("Warning: model not found. Using cl100k_base encoding.")
+        logger.warn("Warning: model not found. Using cl100k_base encoding.")
         encoding = tiktoken.get_encoding("cl100k_base")
     if model == "gpt-3.5-turbo":
         return num_tokens_from_messages(messages, model="gpt-3.5-turbo-0301")

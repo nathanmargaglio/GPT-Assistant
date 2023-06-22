@@ -1,23 +1,31 @@
+import sys
 from datetime import datetime
-from openai_tools import get_embedding, get_importance_of_interaction, get_insights
-from config import DB_URI
+import logging
 import json
-import numpy as np
-import psycopg
-from pgvector.psycopg import register_vector
+from concurrent.futures import ThreadPoolExecutor
 
+from openai_tools import get_embedding, get_importance_of_interaction, get_insights
+from config import DB_URI, LOG_LEVEL, LOG_TO_FILE
+from db import DB
+import numpy as np
+
+logger = logging.getLogger(__name__)
+logger.setLevel(LOG_LEVEL.upper())
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+if LOG_TO_FILE:
+    logger.debug("Logging to file...")
+    handler = logging.FileHandler("bot.log")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 class Memory:
     def __init__(self):
-        self.table_name = "item"
-        self.dimension = 1536
-        with psycopg.connect(DB_URI) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"CREATE EXTENSION IF NOT EXISTS vector;")
-                cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self.table_name} (id bigserial PRIMARY KEY, embedding vector({self.dimension}), metadata JSONB);"
-                )
-            conn.commit()
+        self.db = DB()
 
     def upload_message_response_pair(self, message, response):
         importance = get_importance_of_interaction(message, response)
@@ -28,59 +36,28 @@ class Memory:
             "importance": importance,
             "timestamp": datetime.now(),
         }
-        metadata = json.dumps(metadata, default=str)
-        with psycopg.connect(DB_URI) as conn:
-            register_vector(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"INSERT INTO {self.table_name} (embedding, metadata) VALUES (%s, %s);",
-                    (embedding, metadata),
-                )
-            conn.commit()
+        self.db.insert_memory(embedding, metadata)
+    
+    def insert_insight(self, insight):
+        embedding = get_embedding(insight["content"])
+        metadata = {
+            "insight": insight["content"],
+            "importance": insight["importance"],
+            "timestamp": datetime.now(),
+        }
+        self.db.insert_memory(embedding, metadata)
 
     def reflect(self, messages):
         insights = get_insights(messages)
-        for insight in insights:
-            embedding = get_embedding(insight["content"])
-            metadata = {
-                "insight": insight["content"],
-                "importance": insight["importance"],
-                "timestamp": datetime.now(),
-            }
-            metadata = json.dumps(metadata, default=str)
-            with psycopg.connect(DB_URI) as conn:
-                register_vector(conn)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"INSERT INTO {self.table_name} (embedding, metadata) VALUES (%s, %s);",
-                        (embedding, metadata),
-                    )
-                conn.commit()
+        futures = []
+        with ThreadPoolExecutor() as executor:
+            for insight in insights:
+                futures.append(executor.submit(self.insert_insight, insight))
+        for future in futures:
+            future.result()
 
     def search(self, vector, n=100):
-        with psycopg.connect(DB_URI) as conn:
-            register_vector(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT
-                        id,
-                        embedding,
-                        metadata,
-                        1 - (embedding <-> CAST(%s AS vector)) AS score
-                    FROM {self.table_name}
-                    ORDER BY embedding <-> CAST(%s AS vector) LIMIT %s;
-                """,
-                    (vector, vector, n),
-                )
-                rows = cur.fetchall()
-
-        message_response_pairs = []
-        for row in rows:
-            message_response_pairs.append(
-                {"id": row[0], "embedding": row[1], "metadata": row[2], "score": row[3]}
-            )
-
+        message_response_pairs = self.db.recall_memory(vector, n)
         results = [
             {
                 "message": result["metadata"]["message"]
@@ -124,6 +101,7 @@ class Memory:
             min_importance_insight, max_importance_insight = min(
                 x["importance"] for x in results if x["insight"]
             ), max(x["importance"] for x in results if x["insight"])
+            
             min_importance_no_insight, max_importance_no_insight = min(
                 x["importance"] for x in results if not x["insight"]
             ), max(x["importance"] for x in results if not x["insight"])

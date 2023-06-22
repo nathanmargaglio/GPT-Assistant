@@ -1,12 +1,28 @@
+import sys
 from datetime import datetime
+import logging
+import threading
+
 import openai
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, LOG_LEVEL, LOG_TO_FILE
 from memory import Memory
 from openai_tools import get_embedding, num_tokens_from_messages
-from termcolor import colored
+
+logger = logging.getLogger(__name__)
+logger.setLevel(LOG_LEVEL.upper())
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+if LOG_TO_FILE:
+    logger.debug("Logging to file...")
+    handler = logging.FileHandler("bot.log")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 openai.api_key = OPENAI_API_KEY
-
 
 class ChatGPT:
     def __init__(self, gpt_model):
@@ -81,6 +97,7 @@ class ChatGPT:
 
         messages.extend(reversed(short_term_messages))
 
+        logger.debug("OpenAI: Chat Completion (send_message)")
         response = openai.ChatCompletion.create(
             model=self.gpt_model,
             messages=messages,
@@ -88,26 +105,30 @@ class ChatGPT:
             max_tokens=self.max_tokens,
         )
 
+        threading.Thread(
+            target=self.memorize, args=(message, response.choices[0].message.content)
+        ).start()
+
+        return response.choices[0].message.content
+    
+    def memorize(self, message, response_content):
         self.short_term_memory.append({"role": "user", "content": message})
         self.short_term_memory.append(
-            {"role": "assistant", "content": response.choices[0].message.content}
+            {"role": "assistant", "content": response_content}
         )
-
-        self.long_term_memory.upload_message_response_pair(
-            message, response.choices[0].message.content
-        )
-        self.long_term_memory.reflect(self.short_term_memory)
-
         while (
             num_tokens_from_messages(self.short_term_memory, self.gpt_model)
             > self.short_term_memory_max_tokens
         ):
             self.short_term_memory.pop(0)
 
-        return response.choices[0].message.content
+        self.long_term_memory.upload_message_response_pair(
+            message, response_content
+        )
+        self.long_term_memory.reflect(self.short_term_memory)
 
     def run(self):
         while True:
-            message = input(colored("You: ", "green"))
+            message = input("You: ")
             response = self.send_message(message)
-            print(colored(f"Chatbot: {response}", "cyan"))
+            print(f"Chatbot: {response}")
