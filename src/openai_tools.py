@@ -23,6 +23,7 @@ if LOG_TO_FILE:
 
 openai.api_key = OPENAI_API_KEY
 
+
 def get_embedding(text):
     logger.debug(f"OpenAI: Getting embedding for text...")
     return openai.Embedding.create(input=[text], model="text-embedding-ada-002")[
@@ -122,9 +123,7 @@ def get_insights(messages):
 
         for insight, future in zip(insights_list, futures):
             importance = future.result()
-            insights.append(
-                {"content": insight, "importance": importance}
-            )
+            insights.append({"content": insight, "importance": importance})
 
     return insights
 

@@ -12,13 +12,9 @@ def get_env_variable(var_name, default=None, required=True):
 
 
 DISCORD_BOT_TOKEN = get_env_variable("DISCORD_BOT_TOKEN")
-DISCORD_CHANNELS = [int(channel) for channel in get_env_variable("DISCORD_CHANNELS").split(",")]
 DISCORD_USERS = get_env_variable("DISCORD_USERS").split(",")
 OPENAI_API_KEY = get_env_variable("OPENAI_API_KEY")
 DB_URI = get_env_variable("DB_URI")
-GPT_MODEL = get_env_variable(
-    "GPT_MODEL", default="gpt-3.5-turbo-16k-0613", required=False
-)
 LOG_TO_FILE = (
     get_env_variable("LOG_TO_FILE", default="False", required=False).lower() == "true"
 )

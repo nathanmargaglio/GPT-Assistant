@@ -1,12 +1,10 @@
 import sys
 from datetime import datetime
 import logging
-import json
 from concurrent.futures import ThreadPoolExecutor
 
 from openai_tools import get_embedding, get_importance_of_interaction, get_insights
 from config import DB_URI, LOG_LEVEL, LOG_TO_FILE
-from db import DB
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -23,9 +21,11 @@ if LOG_TO_FILE:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+
 class Memory:
-    def __init__(self):
-        self.db = DB()
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
 
     def upload_message_response_pair(self, message, response):
         importance = get_importance_of_interaction(message, response)
@@ -36,8 +36,8 @@ class Memory:
             "importance": importance,
             "timestamp": datetime.now(),
         }
-        self.db.insert_memory(embedding, metadata)
-    
+        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata)
+
     def insert_insight(self, insight):
         embedding = get_embedding(insight["content"])
         metadata = {
@@ -45,7 +45,7 @@ class Memory:
             "importance": insight["importance"],
             "timestamp": datetime.now(),
         }
-        self.db.insert_memory(embedding, metadata)
+        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata)
 
     def reflect(self, messages):
         insights = get_insights(messages)
@@ -57,7 +57,9 @@ class Memory:
             future.result()
 
     def search(self, vector, n=100):
-        message_response_pairs = self.db.recall_memory(vector, n)
+        message_response_pairs = self.db.recall_memory(
+            name=self.name, vector=vector, n=n
+        )
         results = [
             {
                 "message": result["metadata"]["message"]
@@ -101,7 +103,7 @@ class Memory:
             min_importance_insight, max_importance_insight = min(
                 x["importance"] for x in results if x["insight"]
             ), max(x["importance"] for x in results if x["insight"])
-            
+
             min_importance_no_insight, max_importance_no_insight = min(
                 x["importance"] for x in results if not x["insight"]
             ), max(x["importance"] for x in results if not x["insight"])

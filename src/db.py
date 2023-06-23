@@ -21,59 +21,95 @@ if LOG_TO_FILE:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+
 class DB:
     def __init__(self):
-        self.memory_table_name = "memory"
-        self.config_table_name = "config"
         self.memory_dimension = 1536
-        self.pool = ConnectionPool(DB_URI)
-        with self.pool.connection() as conn:
+        self.config_pool = ConnectionPool(DB_URI + "/config")
+        self.bot_pools = {}
+        self.setup_config_database()
+        self.bot_configs = self.get_bot_configs()
+        for bot_name in self.bot_configs:
+            self.bot_pools[bot_name] = ConnectionPool(DB_URI + f"/{bot_name}")
+            self.setup_bot_database(bot_name)
+
+    def reinitialize(self):
+        self.__init__()
+
+    def setup_config_database(self):
+        with self.config_pool.connection() as conn:
             with conn.cursor() as cur:
-                logger.debug("DB: Setting up DB...")
+                logger.debug("DB: Setting up config database...")
+                cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS bot (id int PRIMARY KEY, name varchar(255), config JSONB);"
+                )
+            conn.commit()
+
+    def setup_bot_database(self, name):
+        pool = self.bot_pools[name]
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                logger.debug(f"DB: Setting up bot '{name}' database...")
                 cur.execute(f"CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self.memory_table_name} (id bigserial PRIMARY KEY, embedding vector({self.memory_dimension}), metadata JSONB);"
-                )
-                cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self.config_table_name} (id int PRIMARY KEY, key varchar(255), value varchar(255));"
+                    f"CREATE TABLE IF NOT EXISTS memory (id bigserial PRIMARY KEY, embedding vector({self.memory_dimension}), metadata JSONB);"
                 )
             conn.commit()
-    
-    def get_config(self, key):
-        with self.pool.connection() as conn:
+
+    def get_bot_configs(self):
+        with self.config_pool.connection() as conn:
             with conn.cursor() as cur:
                 logger.debug("DB: Getting config...")
-                cur.execute(f"SELECT value FROM {self.config_table_name} WHERE key = %s;", (key,))
-                result = cur.fetchone()
-                if result:
-                    return result[0]
-                else:
-                    return None
-    
-    def set_config(self, key, value):
-        with self.pool.connection() as conn:
+                cur.execute(f"SELECT id, name, config FROM bot;")
+                results = cur.fetchall()
+        configs = {}
+        for result in results:
+            configs[result[1]] = result[2]
+        self.bot_configs = configs
+        return configs
+
+    def set_config(self, name, config):
+        config = json.dumps(config, default=str)
+        with self.config_pool.connection() as conn:
             with conn.cursor() as cur:
-                logger.debug("DB: Setting config...")
-                cur.execute(f"INSERT INTO {self.config_table_name} (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = %s;", (key, value, value))
+                logger.debug(f"DB: Setting config for {name}...")
+                logger.debug(f"DB: config: {config}")
+                cur.execute(
+                    f"UPDATE bot SET config = %s WHERE name = %s;",
+                    (config, name),
+                )
             conn.commit()
-    
-    def insert_memory(self, embedding, metadata):
+
+    def insert_config(self, name, config):
+        config = json.dumps(config, default=str)
+        with self.config_pool.connection() as conn:
+            with conn.cursor() as cur:
+                logger.debug(f"DB: Inserting config for {name}...")
+                cur.execute(
+                    f"INSERT INTO bot (name, config) VALUES (%s, %s);",
+                    (name, config),
+                )
+            conn.commit()
+
+    def insert_memory(self, name, embedding, metadata):
+        pool = self.bot_pools[name]
         metadata = json.dumps(metadata, default=str)
-        with self.pool.connection() as conn:
+        with pool.connection() as conn:
             register_vector(conn)
             with conn.cursor() as cur:
-                logger.debug("DB: Inserting memory...")
+                logger.debug(f"DB: Inserting memory for {name}...")
                 cur.execute(
-                    f"INSERT INTO {self.memory_table_name} (embedding, metadata) VALUES (%s, %s);",
+                    f"INSERT INTO memory (embedding, metadata) VALUES (%s, %s);",
                     (embedding, metadata),
                 )
             conn.commit()
-    
-    def recall_memory(self, vector, n=100):
-        with self.pool.connection() as conn:
+
+    def recall_memory(self, name, vector, n=100):
+        pool = self.bot_pools[name]
+        with pool.connection() as conn:
             register_vector(conn)
             with conn.cursor() as cur:
-                logger.debug("DB: Recalling memory...")
+                logger.debug(f"DB: Recalling memory for {name}...")
                 cur.execute(
                     f"""
                     SELECT
@@ -81,7 +117,7 @@ class DB:
                         embedding,
                         metadata,
                         1 - (embedding <-> CAST(%s AS vector)) AS score
-                    FROM {self.memory_table_name}
+                    FROM memory
                     ORDER BY embedding <-> CAST(%s AS vector) LIMIT %s;
                 """,
                     (vector, vector, n),
