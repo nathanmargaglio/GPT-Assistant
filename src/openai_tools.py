@@ -1,25 +1,11 @@
-import sys
 import re
-import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import openai
-from config import OPENAI_API_KEY, LOG_LEVEL, LOG_TO_FILE
+from config import OPENAI_API_KEY, get_logger
 import tiktoken
 
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL.upper())
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-if LOG_TO_FILE:
-    logger.debug("Logging to file...")
-    handler = logging.FileHandler("bot.log")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+logger = get_logger(__name__)
 
 openai.api_key = OPENAI_API_KEY
 

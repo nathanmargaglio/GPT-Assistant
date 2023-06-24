@@ -1,41 +1,32 @@
-import sys
 from datetime import datetime
-import logging
 import threading
 
 import openai
-from config import OPENAI_API_KEY, LOG_LEVEL, LOG_TO_FILE
+from config import OPENAI_API_KEY, get_logger
 from memory import Memory
 from openai_tools import get_embedding, num_tokens_from_messages
 
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL.upper())
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-if LOG_TO_FILE:
-    logger.debug("Logging to file...")
-    handler = logging.FileHandler("bot.log")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+logger = get_logger(__name__)
 
 openai.api_key = OPENAI_API_KEY
-
 
 class ChatGPT:
     def __init__(self, db, name):
         self.db = db
         self.name = name
         self.load_config()
-
-        self.long_term_memory = Memory(db=self.db, name=self.name)
         self.short_term_memory = []
-        self.max_tokens = 500
-        self.short_term_memory_max_tokens = 1500
-        self.temperature = 0.7
+    
+    def load_config(self):
+        self.config = self.db.bot_configs[self.name] if self.name in self.db.bot_configs else {}
+        self.system_prompt = self.config.get("system_prompt", "You are a large language model with the ability to recall snippets from past conversations. You are incredibly helpful, friendly, engaging, and personable.")
+        self.gpt_model = self.config.get("gpt_model", "gpt-3.5-turbo")
+        self.temperature = float(self.config.get("temperature", 0.7))
+        self.max_tokens = int(self.config.get("max_tokens", 500))
+        self.short_term_memory_max_tokens = int(self.config.get("short_term_memory_max_tokens", 1500))
+        self.partition = self.config.get("partition", None)
+        self.long_term_memory = Memory(db=self.db, name=self.name, partition=self.partition)
+
         self.token_capacity = 4096
         if "32k" in self.gpt_model:
             self.token_capacity = 32768
@@ -43,19 +34,6 @@ class ChatGPT:
             self.token_capacity = 16384
         elif "gpt-4" in self.gpt_model:
             self.token_capacity = 8192
-    
-    def load_config(self):
-        self.config = self.db.bot_configs[self.name] if self.name in self.db.bot_configs else {}
-        self.system_prompt = (
-            self.config["system_prompt"]
-            if "system_prompt" in self.config
-            else "You are a large language model with the ability to recall snippets from past conversations. You are incredibly helpful, friendly, engaging, and personable."
-        )
-        self.gpt_model = (
-            self.config["gpt_model"]
-            if "gpt_model" in self.config
-            else "gpt-3.5-turbo-16k-0613"
-        )
 
     def send_message(self, message):
         self.load_config()

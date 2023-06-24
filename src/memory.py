@@ -1,31 +1,17 @@
-import sys
 from datetime import datetime
-import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from openai_tools import get_embedding, get_importance_of_interaction, get_insights
-from config import DB_URI, LOG_LEVEL, LOG_TO_FILE
+from config import get_logger
 import numpy as np
 
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL.upper())
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-if LOG_TO_FILE:
-    logger.debug("Logging to file...")
-    handler = logging.FileHandler("bot.log")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
+logger = get_logger(__name__)
 
 class Memory:
-    def __init__(self, db, name):
+    def __init__(self, db, name, partition=None):
         self.db = db
         self.name = name
+        self.partition = partition
 
     def upload_message_response_pair(self, message, response):
         importance = get_importance_of_interaction(message, response)
@@ -36,7 +22,7 @@ class Memory:
             "importance": importance,
             "timestamp": datetime.now(),
         }
-        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata)
+        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata, partition=self.partition)
 
     def insert_insight(self, insight):
         embedding = get_embedding(insight["content"])
@@ -45,7 +31,7 @@ class Memory:
             "importance": insight["importance"],
             "timestamp": datetime.now(),
         }
-        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata)
+        self.db.insert_memory(name=self.name, embedding=embedding, metadata=metadata, partition=self.partition)
 
     def reflect(self, messages):
         insights = get_insights(messages)
@@ -58,7 +44,7 @@ class Memory:
 
     def search(self, vector, n=100):
         message_response_pairs = self.db.recall_memory(
-            name=self.name, vector=vector, n=n
+            name=self.name, vector=vector, n=n, partition=self.partition
         )
         results = [
             {

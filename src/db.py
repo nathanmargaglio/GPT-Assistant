@@ -1,26 +1,11 @@
-import sys
 import json
-import logging
 
 from psycopg_pool import ConnectionPool
 from pgvector.psycopg import register_vector
 
-from config import DB_URI, LOG_LEVEL, LOG_TO_FILE
+from config import DB_URI, get_logger
 
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL.upper())
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-if LOG_TO_FILE:
-    logger.debug("Logging to file...")
-    handler = logging.FileHandler("bot.log")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
+logger = get_logger(__name__)
 
 class DB:
     def __init__(self):
@@ -52,7 +37,14 @@ class DB:
                 logger.debug(f"DB: Setting up bot '{name}' database...")
                 cur.execute(f"CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS memory (id bigserial PRIMARY KEY, embedding vector({self.memory_dimension}), metadata JSONB);"
+                    f"""
+                        CREATE TABLE IF NOT EXISTS memory (
+                            id bigserial PRIMARY KEY,
+                            partition varchar(255) DEFAULT null,
+                            embedding vector({self.memory_dimension}),
+                            metadata JSONB
+                        );
+                    """
                 )
             conn.commit()
 
@@ -91,7 +83,7 @@ class DB:
                 )
             conn.commit()
 
-    def insert_memory(self, name, embedding, metadata):
+    def insert_memory(self, name, embedding, metadata, partition=None):
         pool = self.bot_pools[name]
         metadata = json.dumps(metadata, default=str)
         with pool.connection() as conn:
@@ -99,12 +91,12 @@ class DB:
             with conn.cursor() as cur:
                 logger.debug(f"DB: Inserting memory for {name}...")
                 cur.execute(
-                    f"INSERT INTO memory (embedding, metadata) VALUES (%s, %s);",
-                    (embedding, metadata),
+                    f"INSERT INTO memory (embedding, metadata, partition) VALUES (%s, %s, %s);",
+                    (embedding, metadata, partition),
                 )
             conn.commit()
 
-    def recall_memory(self, name, vector, n=100):
+    def recall_memory(self, name, vector, n=100, partition=None):
         pool = self.bot_pools[name]
         with pool.connection() as conn:
             register_vector(conn)
@@ -116,16 +108,18 @@ class DB:
                         id,
                         embedding,
                         metadata,
-                        1 - (embedding <-> CAST(%s AS vector)) AS score
+                        1 - (embedding <-> CAST(%s AS vector)) AS score,
+                        partition
                     FROM memory
+                    WHERE partition = %s
                     ORDER BY embedding <-> CAST(%s AS vector) LIMIT %s;
                 """,
-                    (vector, vector, n),
+                    (vector, partition, vector, n),
                 )
                 rows = cur.fetchall()
         message_response_pairs = []
         for row in rows:
             message_response_pairs.append(
-                {"id": row[0], "embedding": row[1], "metadata": row[2], "score": row[3]}
+                {"id": row[0], "embedding": row[1], "metadata": row[2], "score": row[3], "partition": row[4]}
             )
         return message_response_pairs
