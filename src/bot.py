@@ -53,6 +53,41 @@ class BotClient(discord.Client):
                     else:
                         return
                 chatgpt = self.chatgpts[bot_name]
+                if "!pin" in message.content:
+                    index_of_pin = message.content.index("!pin")
+                    message_to_pin = message.content[index_of_pin + 4:].strip()
+                    if message_to_pin != "":
+                        logger.debug(f"Pinning manual message: {message_to_pin}")
+                        chatgpt.pin_message(message_to_pin)
+                    await message.channel.send(f"Message pinned: {chatgpt.pinned_message}")
+                    return
+                if "!unpin" in message.content:
+                    logger.debug("Unpinning message...")
+                    chatgpt.pin_message(None)
+                    await message.channel.send(f"Message unpinned.")
+                    return
+                if "!recall" in message.content:
+                    logger.debug("Recalling message...")
+                    await message.channel.send(f"Short term memory: ```{chatgpt.short_term_memory}```")
+                    return
+                if "!forget" in message.content:
+                    chatgpt.short_term_memory = []
+                    logger.debug("Short term memory cleared.")
+                    await message.channel.send(f"Short term memory cleared.")
+                    return
+                if "!help" in message.content:
+                    logger.debug("Sending help message...")
+                    await message.channel.send(
+                        f"""Commands:
+                            `!recall`: Shows short term memory
+                            `!forget`: Clears short term memory
+                            `!pin`: Shows the pinned message
+                            `!pin <message>`: Pins a message
+                            `!unpin`: Unpins the message
+                            `!help`: Shows this message"""
+                    )
+                    return
+                logger.debug("Chatting with GPT...")
                 await self.chat(message, chatgpt)
 
     async def chat(self, message, chatgpt):
@@ -85,6 +120,10 @@ class BotClient(discord.Client):
                     if args[1] == "short_term_memory":
                         bot_name = args[2]
                         response = self.chatgpts[bot_name].short_term_memory
+                        response = f"```json\n{response}\n```"
+                    if args[1] == "pinned_message":
+                        bot_name = args[2]
+                        response = self.chatgpts[bot_name].pinned_message
                         response = f"```json\n{response}\n```"
                 if len(args) == 4:
                     if args[1] == "config":
@@ -141,8 +180,18 @@ class BotClient(discord.Client):
                         response = f"```json\n{response}\n```"
             
             if args[0] == "reset":
-                self.chatgpts = {}
-                response = "ChatGPTs reset."
+                if len(args) == 2:
+                    if args[1] == "short_term_memory":
+                        bot_name = args[2]
+                        self.chatgpts[bot_name].short_term_memory = []
+                        response = "Short term memory reset."
+                    if args[1] == "pinned_message":
+                        bot_name = args[2]
+                        self.chatgpts[bot_name].pinned_message = []
+                        response = "Pinned message reset."
+                else:
+                    self.chatgpts = {}
+                    response = "ChatGPTs reset."
         except Exception as e:
             logger.error(e)
             response = f"Error: {e}"
