@@ -1,7 +1,7 @@
 import os
 import json
 
-from config import DISCORD_USERS, get_logger
+from config import DISCORD_USERS, DISABLED, get_logger
 
 logger = get_logger(__name__)
 
@@ -17,6 +17,9 @@ class BotClient(discord.Client):
         logger.info("Database initialized.")
 
     async def on_message(self, message):
+        if DISABLED:
+            return
+        
         if message.author == self.user:
             return
 
@@ -57,12 +60,6 @@ class BotClient(discord.Client):
         logger.debug("Sending message to GPT...")
         response_message = chatgpt.send_message(message.content)
         logger.info(f"> GPT: {response_message}")
-        if 'RTM:' in response_message:
-            # remove everything before the RTM: tag
-            response_message = response_message.split('RTM:')[1]
-            # remove the RTM: tag
-            response_message = response_message.replace('RTM:', '')
-        response_message = response_message.replace("Stay in RTM Mode.", "").strip()
         await message.channel.send(response_message)
 
     async def run_command(self, message):
@@ -85,6 +82,10 @@ class BotClient(discord.Client):
                         self.db.get_bot_configs()
                         response = json.dumps(self.db.bot_configs[bot_name], indent=4)
                         response = f"```json\n{response}\n```"
+                    if args[1] == "short_term_memory":
+                        bot_name = args[2]
+                        response = self.chatgpts[bot_name].short_term_memory
+                        response = f"```json\n{response}\n```"
                 if len(args) == 4:
                     if args[1] == "config":
                         bot_name = args[2]
@@ -92,6 +93,7 @@ class BotClient(discord.Client):
                         self.db.get_bot_configs()
                         response = json.dumps(self.db.bot_configs[bot_name][config_key], indent=4)
                         response = f"```json\n{response}\n```"
+
             if args[0] == "set":
                 if len(args) >= 3:
                     if args[1] == "config":
@@ -137,6 +139,10 @@ class BotClient(discord.Client):
                         self.db.get_bot_configs()
                         response = json.dumps(self.db.bot_configs[bot_name], indent=4)
                         response = f"```json\n{response}\n```"
+            
+            if args[0] == "reset":
+                self.chatgpts = {}
+                response = "ChatGPTs reset."
         except Exception as e:
             logger.error(e)
             response = f"Error: {e}"

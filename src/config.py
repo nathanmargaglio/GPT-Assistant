@@ -18,6 +18,7 @@ OPENAI_API_KEY = get_env_variable("OPENAI_API_KEY")
 DB_URI = get_env_variable("DB_URI")
 LOG_LEVEL = get_env_variable("LOG_LEVEL", default="INFO", required=False)
 INSTANCE_ID = get_env_variable("INSTANCE_ID", default="default", required=False)
+DISABLED = get_env_variable("DISABLED", default="false", required=False).lower() == "true"
 
 def get_logger(logger_name):
     logger = logging.getLogger(logger_name)
