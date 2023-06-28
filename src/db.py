@@ -9,6 +9,10 @@ logger = get_logger(__name__)
 
 class DB:
     def __init__(self):
+        self.disabled = DB_URI is None
+        if self.disabled:
+            logger.warning("DB: DB_URI is not set, disabling database...")
+            return
         self.memory_dimension = 1536
         self.config_pool = ConnectionPool(DB_URI + "/config")
         self.bot_pools = {}

@@ -41,6 +41,9 @@ class ChatGPT:
             self.token_capacity = 16384
         elif "gpt-4" in self.gpt_model:
             self.token_capacity = 8192
+        
+        if self.db.disabled:
+            self.disable_long_term_memory = True
 
     def send_message(self, message):
         self.load_config()

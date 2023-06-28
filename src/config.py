@@ -15,7 +15,7 @@ def get_env_variable(var_name, default=None, required=True):
 DISCORD_BOT_TOKEN = get_env_variable("DISCORD_BOT_TOKEN")
 DISCORD_USERS = get_env_variable("DISCORD_USERS").split(",")
 OPENAI_API_KEY = get_env_variable("OPENAI_API_KEY")
-DB_URI = get_env_variable("DB_URI")
+DB_URI = get_env_variable("DB_URI", default=None, required=False)
 LOG_LEVEL = get_env_variable("LOG_LEVEL", default="INFO", required=False)
 INSTANCE_ID = get_env_variable("INSTANCE_ID", default="default", required=False)
 DISABLED = get_env_variable("DISABLED", default="false", required=False).lower() == "true"
