@@ -9,14 +9,25 @@ import discord
 from gpt import ChatGPT
 from db import DB
 
+def logger_decorator(func):
+    async def wrapper(self, message):
+        try:
+            await func(self, message)
+        except Exception as e:
+            logger.error(e)
+    return wrapper
+
 class BotClient(discord.Client):
-    async def on_ready(self):
-        logger.info(f"Logged on as {self.user}")
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.db = DB()
         self.chatgpts = {}
-        logger.info("Database initialized.")
         self.message_cutoff = 200
-
+    
+    async def on_ready(self):
+        logger.info(f"Logged on as {self.user}")
+    
+    @logger_decorator
     async def on_message(self, message):
         if DISABLED:
             return
@@ -40,6 +51,8 @@ class BotClient(discord.Client):
         for bot_name in bot_configs:
             config = bot_configs[bot_name]
             channel_ids = config.get("channel_ids", None)
+            if isinstance(channel_ids, str):
+                channel_ids = json.loads(channel_ids)
             if channel_ids is None or message.channel.id in channel_ids:
                 if bot_name not in self.chatgpts:
                     self.chatgpts[bot_name] = ChatGPT(db=self.db, name=bot_name)
@@ -95,7 +108,8 @@ class BotClient(discord.Client):
         await message.channel.typing()
         logger.debug("Sending message to GPT...")
         response_message = chatgpt.send_message(message.content)
-        logger.info(f"> GPT: {response_message}")
+        bot_name = chatgpt.name
+        logger.info(f"> {bot_name}: {response_message}")
         await message.channel.send(response_message)
 
     async def run_command(self, message):

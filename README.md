@@ -39,3 +39,4 @@ I'm currently running the container out of a Micro node ($10 per month, with 3 m
 - Make the Postgres database an optional feature.
 - Use [function calling](https://platform.openai.com/docs/guides/gpt/function-calling) more intricately (e.g., call social media APIs, manage calendars, etc.)
 - Have the bot run asynchronously, i.e., it can message the server without being messaged first.
+- Setup new bots automatically (e.g., create database, populate default config, etc.)
