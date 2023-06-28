@@ -30,7 +30,7 @@ class DB:
             with conn.cursor() as cur:
                 logger.debug("DB: Setting up config database...")
                 cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS bot (id int PRIMARY KEY, name varchar(255), config JSONB);"
+                    f"CREATE TABLE IF NOT EXISTS bot (id serial PRIMARY KEY, name varchar(255), config JSONB);"
                 )
             conn.commit()
 

@@ -15,6 +15,7 @@ class BotClient(discord.Client):
         self.db = DB()
         self.chatgpts = {}
         logger.info("Database initialized.")
+        self.message_cutoff = 200
 
     async def on_message(self, message):
         if DISABLED:
@@ -109,14 +110,14 @@ class BotClient(discord.Client):
             if args[0] == "get":
                 if len(args) == 2:
                     if args[1] == "config":
-                        response = json.dumps(self.db.bot_configs, indent=4)
+                        bot_names = list(self.db.bot_configs.keys())
+                        response = json.dumps(bot_names, indent=4)
                         response = f"```json\n{response}\n```"
                 if len(args) == 3:
                     if args[1] == "config":
                         bot_name = args[2]
                         self.db.get_bot_configs()
-                        response = json.dumps(self.db.bot_configs[bot_name], indent=4)
-                        response = f"```json\n{response}\n```"
+                        response = self.prepare_config_response(bot_name)
                     if args[1] == "short_term_memory":
                         bot_name = args[2]
                         response = self.chatgpts[bot_name].short_term_memory
@@ -143,8 +144,7 @@ class BotClient(discord.Client):
                             config = json.loads(config_text)
                             self.db.set_config(bot_name, config)
                             self.db.get_bot_configs()
-                            response = json.dumps(self.db.bot_configs[bot_name], indent=4)
-                            response = f"```json\n{response}\n```"
+                            response = self.prepare_config_response(bot_name)
                         elif len(files) > 0:
                             # assume we've uploaded a message.txt file
                             file = files[0]
@@ -158,8 +158,7 @@ class BotClient(discord.Client):
                             config[config_key] = update_value
                             self.db.set_config(bot_name, config)
                             self.db.get_bot_configs()
-                            response = json.dumps(self.db.bot_configs[bot_name], indent=4)
-                            response = f"```json\n{response}\n```"
+                            response = self.prepare_config_response(bot_name)
                         else:
                             config_key = args[3]
                             config_value = " ".join(args[4:])
@@ -167,17 +166,15 @@ class BotClient(discord.Client):
                             config[config_key] = config_value
                             self.db.set_config(bot_name, config)
                             self.db.get_bot_configs()
-                            response = json.dumps(self.db.bot_configs[bot_name], indent=4)
-                            response = f"```json\n{response}\n```"
+                            response = self.prepare_config_response(bot_name)
 
             if args[0] == "insert":
                 if len(args) >= 3:
                     if args[1] == "config":
                         bot_name = args[2]
-                        self.db.insert_config(bot_name)
+                        self.db.insert_config(bot_name, {})
                         self.db.get_bot_configs()
-                        response = json.dumps(self.db.bot_configs[bot_name], indent=4)
-                        response = f"```json\n{response}\n```"
+                        response = self.prepare_config_response(bot_name)
             
             if args[0] == "reset":
                 if len(args) == 2:
@@ -221,3 +218,13 @@ class BotClient(discord.Client):
         else:
             await message.channel.send("No output available.")
         return
+    
+    def prepare_config_response(self, bot_name):
+        self.message_cutoff
+        config = self.db.bot_configs[bot_name]
+        for key, value in config.items():
+            if len(str(value)) > self.message_cutoff:
+                config[key] = str(value)[:self.message_cutoff] + "..."
+        response = json.dumps(config, indent=4)
+        response = f"```json\n{response}\n```"
+        return response

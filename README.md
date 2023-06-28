@@ -16,6 +16,7 @@ Create a `.env` file with the following environment variables:
 - `OPEN_API_KEY`: The API key [provided by OpenAI with access to GPT](https://platform.openai.com/docs/introduction).
 - `DB_URI`: The URI to a PostgreSQL database.
 - `DISCORD_USERS`: A list of "raw" Discord usernames who have poweruser access (i.e., can run "dangerous" commands).
+- 'DISCORD_CHANNELS`: A list of channel IDs in which the bot is allowed to operate.
 
 With that file populated in the root directory of this project, you can start the bot locally with:
 
