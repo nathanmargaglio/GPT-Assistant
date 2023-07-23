@@ -13,6 +13,13 @@ logger = get_logger(__name__)
 openai.api_key = OPENAI_API_KEY
 
 class ChatGPT:
+    """
+    A class to handle chat functionality with OpenAI's GPT-3 model.
+
+    Attributes:
+    db: A database object to store and retrieve chat configurations.
+    name: A string representing the name of the chatbot.
+    """
     def __init__(self, db, name):
         self.db = db
         self.name = name
@@ -21,6 +28,9 @@ class ChatGPT:
         self.pinned_message = None
     
     def load_config(self):
+        """
+        Loads the configuration for the chatbot from the database.
+        """
         self.config = self.db.bot_configs[self.name] if self.name in self.db.bot_configs else {}
         self.system_prompt = self.config.get("system_prompt", "You are a large language model with the ability to recall snippets from past conversations. You are incredibly helpful, friendly, engaging, and personable.")
         self.gpt_model = self.config.get("gpt_model", "gpt-3.5-turbo")
@@ -46,6 +56,15 @@ class ChatGPT:
             self.disable_long_term_memory = True
 
     def send_message(self, message):
+        """
+        Constructs the request to OpenAI and sends it.
+
+        Parameters:
+        message: A string representing the user's message.
+
+        Returns:
+        A string representing the chatbot's response.
+        """
         self.load_config()
 
         # Construct the request to OpenAI
@@ -156,6 +175,13 @@ class ChatGPT:
         return response_message
 
     def memorize(self, message, response_content):
+        """
+        Stores the user's message and the bot's response in the short-term memory.
+
+        Parameters:
+        message: A string representing the user's message.
+        response_content: A string representing the chatbot's response.
+        """
         self.short_term_memory.append({"role": "user", "content": message})
         self.short_term_memory.append(
             {"role": "assistant", "content": response_content}
@@ -171,6 +197,16 @@ class ChatGPT:
             self.long_term_memory.reflect(self.short_term_memory)
     
     def clean_message(self, response_message, re_pattern):
+        """
+        Cleans the response message if a clean_re_pattern is configured.
+
+        Parameters:
+        response_message: A string representing the chatbot's response.
+        re_pattern: A string representing the regular expression pattern to clean the response message.
+
+        Returns:
+        A string representing the cleaned response message.
+        """
         pattern = re.compile(re_pattern, re.DOTALL)
         match = pattern.search(response_message)
         if match:
@@ -180,12 +216,21 @@ class ChatGPT:
         return response_message
 
     def run(self):
+        """
+        The main loop for the chatbot, where it receives user input and sends responses.
+        """
         while True:
             message = input("You: ")
             response = self.send_message(message)
             print(f"Chatbot: {response}")
     
     def handle_message_pinning(self, message):
+        """
+        Handles the pinning of important messages.
+
+        Parameters:
+        message: A string representing the user's message.
+        """
         # ask gpt if we should pin the message
         functions = [
             {
@@ -245,11 +290,36 @@ class ChatGPT:
             fuction_to_call(**function_args)
     
     def pin_message(self, message):
+        """
+        Pins a message to the bot's memory.
+
+        Parameters:
+        message: A string representing the user's message.
+        """
         if message:
             logger.debug(f"Storing pinned message: {message}")
             self.pinned_message = {"role": "system", "content": str(message)}
         else:
             self.pinned_message = None
+
+    def clean_message(self, response_message, re_pattern):
+        """
+        Cleans the response message if a clean_re_pattern is configured.
+
+        Parameters:
+        response_message: A string representing the chatbot's response.
+        re_pattern: A string representing the regular expression pattern to clean the response message.
+
+        Returns:
+        A string representing the cleaned response message.
+        """
+        pattern = re.compile(re_pattern, re.DOTALL)
+        match = pattern.search(response_message)
+        if match:
+            result = match.group(1)
+            if result:
+                response_message = result
+        return response_message
 
 pin_message_schema = {
     "type": "object",
