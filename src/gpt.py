@@ -196,6 +196,25 @@ class ChatGPT:
             self.long_term_memory.upload_message_response_pair(message, response_content)
             self.long_term_memory.reflect(self.short_term_memory)
     
+    def clean_message(self, response_message, re_pattern):
+        """
+        Cleans the response message using a regular expression pattern.
+
+        Parameters:
+        response_message: A string representing the chatbot's response.
+        re_pattern: A string representing the regular expression pattern.
+
+        Returns:
+        A string representing the cleaned chatbot's response.
+        """
+        pattern = re.compile(re_pattern, re.DOTALL)
+        match = pattern.search(response_message)
+        if match:
+            result = match.group(1)
+            if result:
+                response_message = result
+        return response_message
+    
 
     def run(self):
         """
