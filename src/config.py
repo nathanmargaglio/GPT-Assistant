@@ -6,28 +6,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_env_variable(var_name, default=None, required=True):
-    value = os.getenv(var_name, default)
-    if required and not value:
-        raise ValueError(f"{var_name} environment variable is missing from .env")
-    return value
-
-DISCORD_BOT_TOKEN = get_env_variable("DISCORD_BOT_TOKEN")
-DISCORD_USERS = get_env_variable("DISCORD_USERS").split(",")
-OPENAI_API_KEY = get_env_variable("OPENAI_API_KEY")
-DB_URI = get_env_variable("DB_URI", default=None, required=False)
-LOG_LEVEL = get_env_variable("LOG_LEVEL", default="INFO", required=False)
-INSTANCE_ID = get_env_variable("INSTANCE_ID", default="default", required=False)
-DISABLED = get_env_variable("DISABLED", default="false", required=False).lower() == "true"
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 def get_logger(logger_name):
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
     logger = logging.getLogger(logger_name)
-    logger.setLevel(LOG_LEVEL.upper())
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    handler = logging.handlers.RotatingFileHandler("bot.log", maxBytes=10 * 1024 * 1024, backupCount=5)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    
+    logger.propagate = False
+
+    if not logger.handlers:
+        logger.setLevel(LOG_LEVEL)
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - (%(filename)s:%(lineno)d) - %(message)s")
+        
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
+        
+        file_handler = logging.handlers.RotatingFileHandler("bot.log", maxBytes=10 * 1024 * 1024, backupCount=5)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    
     return logger

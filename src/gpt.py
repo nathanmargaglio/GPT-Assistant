@@ -1,48 +1,34 @@
 import json
-import re
-from datetime import datetime
-import threading
+from pprint import pprint
 
 import openai
-from config import OPENAI_API_KEY, get_logger
-from memory import Memory
-from openai_tools import get_embedding, num_tokens_from_messages
+import tiktoken
 
-logger = get_logger(__name__)
+from func import LogQS
+from config import OPENAI_API_KEY, get_logger
+
+# logger = get_logger(__name__)
 
 openai.api_key = OPENAI_API_KEY
 
 class ChatGPT:
-    """
-    A class to handle chat functionality with OpenAI's GPT-3 model.
-
-    Attributes:
-    db: A database object to store and retrieve chat configurations.
-    name: A string representing the name of the chatbot.
-    """
-    def __init__(self, db, name):
-        self.db = db
-        self.name = name
+    def __init__(self):
         self.load_config()
+        self.lqs = LogQS()
         self.short_term_memory = []
-        self.pinned_message = None
     
     def load_config(self):
         """
         Loads the configuration for the chatbot from the database.
         """
-        self.config = self.db.bot_configs[self.name] if self.name in self.db.bot_configs else {}
-        self.system_prompt = self.config.get("system_prompt", "You are a large language model with the ability to recall snippets from past conversations. You are incredibly helpful, friendly, engaging, and personable.")
-        self.gpt_model = self.config.get("gpt_model", "gpt-3.5-turbo")
-        self.temperature = float(self.config.get("temperature", 0.7))
+        self.config = {}
+        # gpt-4-0613
+        # gpt-3.5-turbo-0613
+        # gpt-3.5-turbo-16k-0613
+        self.gpt_model = self.config.get("gpt_model", "gpt-4-0613")
+        self.temperature = float(self.config.get("temperature", 0.3))
         self.max_response_tokens = int(self.config.get("max_response_tokens", 490))
         self.short_term_memory_max_tokens = int(self.config.get("short_term_memory_max_tokens", 1500))
-        self.partition = self.config.get("partition", None)
-        self.long_term_memory = Memory(db=self.db, name=self.name, partition=self.partition)
-        self.clean_re_pattern = self.config.get("clean_re_pattern", None)
-        self.disable_long_term_memory = self.config.get("disable_long_term_memory", True)
-        self.disable_self_pinning = self.config.get("disable_self_pinning", True)
-        self.max_short_term_memory = int(self.config.get("max_short_term_memory", 4))
 
         self.token_capacity = 4096
         if "32k" in self.gpt_model:
@@ -51,265 +37,149 @@ class ChatGPT:
             self.token_capacity = 16384
         elif "gpt-4" in self.gpt_model:
             self.token_capacity = 8192
-        
-        if self.db.disabled:
-            self.disable_long_term_memory = True
 
-    def send_message(self, message):
-        """
-        Constructs the request to OpenAI and sends it.
-
-        Parameters:
-        message: A string representing the user's message.
-
-        Returns:
-        A string representing the chatbot's response.
-        """
+    async def send_message(self, message, send_image, on_function_call):
         self.load_config()
 
-        # Construct the request to OpenAI
+        self.memorize({"role": "user", "content": message})
 
-        # System Prompt
-        system_prompt = self.system_prompt
-        if self.config.get("include_username", False):
-            system_prompt += f" When available, the user who sent the message will precede the message in brackets, like so: [username]."
-        messages = [
-            {
-                "role": "system",
-                "content": self.system_prompt,
-            },
-        ]
-
-        # Pinned Message
-        if self.pinned_message:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "You have determined the following message to be important enough to pin to your memory.  Place the greatest emphasis on this message and following any directives it provides.",
-                },
-            )
-            logger.debug(f"Appending pinned message: {self.pinned_message}")
-            messages.append(self.pinned_message)
-        
-        if not self.disable_self_pinning:
-            threading.Thread(
-                target=self.handle_message_pinning, args=(message,)
-            ).start()
-
-        # Short Term Memory
-        # Add short-term memory messages up to our token limit
-        short_term_messages = [
-            {
-                "role": "system",
-                "content": f"Current UTC time: {datetime.now().isoformat()}",
-            },
-            {"role": "user", "content": message},
-        ]
-        for msg in reversed(self.short_term_memory):
-            if (
-                num_tokens_from_messages(short_term_messages + [msg], self.gpt_model)
-                <= self.short_term_memory_max_tokens
-            ):
-                short_term_messages.append(msg)
-            else:
-                break
-        
-        if len(self.short_term_memory) > self.max_short_term_memory:
-            self.short_term_memory = self.short_term_memory[-self.max_short_term_memory:]
-        
-        # Long Term Memory
-        if not self.disable_long_term_memory:
-            long_term_memory_messages = self.long_term_memory.search(get_embedding(message))
-
-            # Add long-term memory messages until the token limit is reached
-            token_limit = self.token_capacity - self.max_response_tokens
-            for msg in sorted(long_term_memory_messages, key=lambda x: x["timestamp"]):
-                if msg["insight"]:
-                    temp_msg = [
-                        {
-                            "role": "system",
-                            "content": f"You had the following insight on {msg['timestamp']}: {msg['insight']}",
-                        }
-                    ]
-                else:
-                    temp_msg = [
-                        {
-                            "role": "system",
-                            "content": f"This is a snippet from earlier on {msg['timestamp']}",
-                        },
-                        {"role": "user", "content": msg["message"]},
-                        {"role": "assistant", "content": msg["response"]},
-                    ]
-
-                if (
-                    num_tokens_from_messages(
-                        messages + short_term_messages + temp_msg, self.gpt_model
-                    )
-                    <= token_limit
-                ):
-                    messages.extend(temp_msg)
-                else:
-                    break
-
-        # Add short-term memory messages to the end of the message list
-        messages.extend(reversed(short_term_messages))
-
-        # Send the request to OpenAI
-        logger.debug("OpenAI: Chat Completion (send_message)")
         response = openai.ChatCompletion.create(
             model=self.gpt_model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_response_tokens,
+            messages=self.recall(),
+            functions=self.lqs.get_function_schemas(),
+            function_call="auto",
         )
-        response_message = response.choices[0].message.content
-        
-        # If configured, clean the response message
-        if self.clean_re_pattern:
-            response_message = self.clean_message(response_message, re_pattern=self.clean_re_pattern)
-
-        threading.Thread(
-            target=self.memorize, args=(message, response_message)
-        ).start()
-
-        return response_message
-
-    def memorize(self, message, response_content):
-        """
-        Stores the user's message and the bot's response in the short-term memory.
-
-        Parameters:
-        message: A string representing the user's message.
-        response_content: A string representing the chatbot's response.
-        """
-        self.short_term_memory.append({"role": "user", "content": message})
-        self.short_term_memory.append(
-            {"role": "assistant", "content": response_content}
+        assert isinstance(response, dict)
+        response_message = response["choices"][0]["message"]
+        response_message = await self.handle_response_message(
+            response_message=response_message,
+            send_image=send_image,
+            on_function_call=on_function_call,
         )
-        while (
-            num_tokens_from_messages(self.short_term_memory, self.gpt_model)
-            > self.short_term_memory_max_tokens
-        ):
-            self.short_term_memory.pop(0)
-        
-        if not self.disable_long_term_memory:
-            self.long_term_memory.upload_message_response_pair(message, response_content)
-            self.long_term_memory.reflect(self.short_term_memory)
+        return response_message["content"]
     
-    def clean_message(self, response_message, re_pattern):
-        """
-        Cleans the response message using a regular expression pattern.
-
-        Parameters:
-        response_message: A string representing the chatbot's response.
-        re_pattern: A string representing the regular expression pattern.
-
-        Returns:
-        A string representing the cleaned chatbot's response.
-        """
-        pattern = re.compile(re_pattern, re.DOTALL)
-        match = pattern.search(response_message)
-        if match:
-            result = match.group(1)
-            if result:
-                response_message = result
-        return response_message
+    async def handle_response_message(self, response_message, send_image, on_function_call):
+        if response_message.get("function_call"):
+            message = await self.handle_function_call(
+                message=response_message,
+                send_image=send_image,
+                on_function_call=on_function_call
+            )
+        else:
+            self.memorize({"role": "assistant", "content": response_message["content"]})
+            message = response_message
+        return message
     
+    async def handle_function_call(self, message, send_image, on_function_call):
+        function_name = message["function_call"]["name"]
+        function_args = json.loads(message["function_call"]["arguments"])
+        explain = function_args.pop("explain", None)
+        self.memorize({"role": "assistant", "content": explain})
+        await on_function_call(message=explain)
 
-    def run(self):
-        """
-        The main loop for the chatbot, where it receives user input and sends responses.
-        """
-        while True:
-            message = input("You: ")
-            response = self.send_message(message)
-            print(f"Chatbot: {response}")
-    
-    def handle_message_pinning(self, message):
-        """
-        Handles the pinning of important messages.
+        function_response = self.lqs.call_function(function_name, **function_args)
+        if type(function_response) == bytes:
+            await send_image(function_response)
+            function_response = "Image successfully sent to user."
+        self.memorize({"role": "function", "name": function_name, "content": function_response})
 
-        Parameters:
-        message: A string representing the user's message.
-        """
-        # ask gpt if we should pin the message
-        functions = [
-            {
-                "name": "pin_message",
-                "description": "Store a message in memory or unset the pinned message.",
-                "parameters": pin_message_schema,
-            },
-        ]
+        response = openai.ChatCompletion.create(
+            model=self.gpt_model,
+            messages=self.recall(),
+            functions=self.lqs.get_function_schemas(),
+            function_call="auto",
+        )
+        assert isinstance(response, dict)
+        return await self.handle_response_message(
+            response_message=response["choices"][0]["message"],
+            send_image=send_image,
+            on_function_call=on_function_call,
+        )
+
+    def recall(self):
         messages = [
             {
                 "role": "system",
                 "content": """
-                    In another context, you are a large language model with
-                    the ability to recall snippets from past conversations.
-                    You have the ability to pin the following message to your
-                    memory. If a message provides important context and should be
-                    rememebered indefinitely, store it in memory permanently.
-                    This is especially useful for storing directives, such as
-                    rules, guidelines, or requests to remember something.
-                    If the memory should be forgotten (e.g. user asks you to forget),
-                    you can unpin the message.
+                    You are a large language model designed to help users navigate the LogQS API.
+                    LogQS allows users to query and visualize data from ROS bags stored in the cloud.
+                    A typical workflow has users listing logs, listing topics from the log,
+                    querying records from the topics, and visualizing the results.
+
+                    You have the ability to perform function calls to the API.  You can also chain
+                    function calls together.  For example, you can list logs, then list topics from
+                    a log, then query records from a topic, then visualize the results, all without
+                    explicitly waiting for the user to tell you the next step.  When you make a function
+                    call, you can optionally provide an explanation of why you're making the call.  This
+                    will be displayed to the user to help them understand your thought process.
+
+                    Users will typically ask you to find records pertaining to one topic, then ask you
+                    follow-up information related to another.  For example, I user may ask:
+
+                        "When does the vehicle experience the greatest G-force?"
+                    
+                    And you may tell them the timestamp of the record with the greatest G-force based on
+                    query results from the IMU topics.  The user then may ask:
+
+                        "Show me an image from when that occurred."
+                    
+                    If this occurs, you need to fetch the timestamp from the Image topic nearest to the
+                    timestamp of the record with the greatest G-force.  You can do this by making querying
+                    the Image topic based on the timestamp from the first result.  You cannot directly
+                    use the timestamp from one topic to reference records from another.
                 """
             },
-            {
-                "role": "system",
-                "content": "The following is the current pinned message",
-            },
-            {
-                "role": "system",
-                "content": str(self.pinned_message),
-            },
-            {
-                "role": "system",
-                "content": "The following is the message just received.",
-            },
-            {
-                "role": "user",
-                "content": message,
-            },
-        ]
-        logger.debug("OpenAI: Chat Completion (handle_message_pinning)")
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo-0613",
-            messages=messages,
-            functions=functions,
-            function_call="auto",  # auto is default, but we'll be explicit
-        )
-        response_message = response["choices"][0]["message"]
-
-        if response_message.get("function_call"):
-            available_functions = {
-                "pin_message": self.pin_message,
-            }
-            function_name = response_message["function_call"]["name"]
-            fuction_to_call = available_functions[function_name]
-            function_args = json.loads(response_message["function_call"]["arguments"])
-            fuction_to_call(**function_args)
+        ]   
+        messages.extend(self.short_term_memory)
+        print("========================================")
+        pprint(self.short_term_memory)
+        return messages
     
-    def pin_message(self, message):
-        """
-        Pins a message to the bot's memory.
+    def memorize(self, message_data):
+        self.short_term_memory.append(message_data)
+        while (
+            self.num_tokens_from_messages(self.short_term_memory, self.gpt_model)
+            > self.short_term_memory_max_tokens
+        ):
+            self.short_term_memory.pop(0)
 
-        Parameters:
-        message: A string representing the user's message.
-        """
-        if message:
-            logger.debug(f"Storing pinned message: {message}")
-            self.pinned_message = {"role": "system", "content": str(message)}
+    def num_tokens_from_messages(self, messages, model="gpt-3.5-turbo-0613"):
+        """Return the number of tokens used by a list of messages."""
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            print("Warning: model not found. Using cl100k_base encoding.")
+            encoding = tiktoken.get_encoding("cl100k_base")
+        if model in {
+            "gpt-3.5-turbo-0613",
+            "gpt-3.5-turbo-16k-0613",
+            "gpt-4-0314",
+            "gpt-4-32k-0314",
+            "gpt-4-0613",
+            "gpt-4-32k-0613",
+            }:
+            tokens_per_message = 3
+            tokens_per_name = 1
+        elif model == "gpt-3.5-turbo-0301":
+            tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
+            tokens_per_name = -1  # if there's a name, the role is omitted
+        elif "gpt-3.5-turbo-16k" in model:
+            return self.num_tokens_from_messages(messages, model="gpt-3.5-turbo-16k-0613")
+        elif "gpt-3.5-turbo" in model:
+            return self.num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613")
+        elif "gpt-4" in model:
+            print("Warning: gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
+            return self.num_tokens_from_messages(messages, model="gpt-4-0613")
         else:
-            self.pinned_message = None
-
-pin_message_schema = {
-    "type": "object",
-    "properties": {
-        "message": {
-            "type": ["string", "null"],
-            "description": "The user message to pin to memory."
-        }
-    },
-    "required": ["message"],
-}
+            raise NotImplementedError(
+                f"""num_tokens_from_messages() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
+            )
+        num_tokens = 0
+        for message in messages:
+            num_tokens += tokens_per_message
+            for key, value in message.items():
+                num_tokens += len(encoding.encode(value))
+                if key == "name":
+                    num_tokens += tokens_per_name
+        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+        return num_tokens
